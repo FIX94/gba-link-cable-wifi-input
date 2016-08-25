@@ -23,16 +23,30 @@ extern u32 gba_mb_gba_size;
 
 u8 *resbuf,*cmdbuf;
 volatile u16 pads = 0;
-volatile bool ctrlerr = false;
+volatile bool ctrlQuit = 0;
+volatile u32 ctrlerr = 0;
+volatile u32 ctrlread = 0;
+volatile u32 ctrlStatReset = 0;
 void ctrlcb(s32 chan, u32 ret)
 {
-	if(ret)
-	{
-		ctrlerr = true;
+	//requested
+	if(ctrlQuit)
 		return;
+
+	//reset stats around every second
+	if(ctrlStatReset) {
+		ctrlStatReset = 0;
+		ctrlread = 0;
+		ctrlerr = 0;
 	}
-	// just call us again
-	pads = (~((resbuf[1]<<8)|resbuf[0]))&0x3FF;
+
+	if(!ret) { //no error, so safe to update buttons
+		pads = (~((resbuf[1]<<8)|resbuf[0]))&0x3FF;
+		ctrlread++; //save good reads for stats
+	}
+	else //save error for stats
+		ctrlerr++;
+
 	// get new data around every millisecond
 	SI_Transfer(1,cmdbuf,1,resbuf,5,ctrlcb,1000);
 }
@@ -187,7 +201,7 @@ int main(int argc, char *argv[])
 	{
 		printf("\x1b[2J");
 		printf("\x1b[37m");
-		printf("GBA Link Cable WiFi Input Server v1.0 by FIX94\n");
+		printf("GBA Link Cable WiFi Input Server v1.1 by FIX94\n");
 		puts(ipChar);
 		printf("You can press any GC controller button to quit\n");
 		printf("Waiting for GBA in port 2...\n");
@@ -268,6 +282,7 @@ int main(int argc, char *argv[])
 			tInterval.tv_nsec = 0;
 			SYS_SetPeriodicAlarm(timer,&tInterval,&tInterval,alarmCb,0);
 			//start read chain
+			ctrlQuit = false;
 			cmdbuf[0] = 0x14; //read
 			transval = 0;
 			SI_Transfer(1,cmdbuf,1,resbuf,5,ctrlcb,SI_TRANS_DELAY);
@@ -290,30 +305,47 @@ int main(int argc, char *argv[])
 			u32 theRes = 0;
 			while(theRes != 0xDEADBEEF) {
 				net_recvfrom(sock, &theRes, 4, 0, (struct sockaddr *)&from, &length);
-				usleep(100000); //only check every 100ms
+				PAD_ScanPads();
+				VIDEO_WaitVSync();
+				if(PAD_ButtonsHeld(0))
+					endproc();
 			}
-			net_sendto(sock, &theRes, 4, 0, (struct sockaddr *)&from, length);
-			puts("All Done, sending inputs to PC");
+			//send result back to pc
+			for(i = 0; i < 10; i++) {
+				net_sendto(sock, &theRes, 4, 0, (struct sockaddr *)&from, length);
+				VIDEO_WaitVSync();
+			}
+			printf("All Done, sending inputs to PC\n   ");
 			//hm
-			int loops = 0;
+			int loops = 0, secToQuit = 15;
 			while(1)
 			{
 				if(updateStat)
 				{
+					if(ctrlread == 0 && ctrlerr > 700) {
+						secToQuit--;
+						printf("\rPackets per second:%i, GBA disconnected, loop end in %i seconds     ",loops,secToQuit);
+					}
+					else if(ctrlread < 1000) {
+						printf("\rPackets per second:%i, GBA Reads per second:%i (%i failed)          ",loops,ctrlread,ctrlerr);
+						secToQuit = 15;
+					}
 					updateStat = 0;
-					printf("\rPackets per second:%i             ",loops);
+					ctrlStatReset = 1;
 					loops = 0;
 				}
-				if(ctrlerr) break;
+				if(secToQuit <= 0) break;
 				vu16 data = pads;
 				net_sendto(sock, (void*)&data, 2, 0, (struct sockaddr *)&from, length);
 				usleep(1400);
 				loops++;
 			}
-			puts("\nGBA disconnected");
-			SYS_RemoveAlarm(timer);
+			printf("\rGBA disconnected, loop end                                     ");
+			SYS_CancelAlarm(timer);
 			net_close(sock);
+			ctrlQuit = true;
 			sleep(2);
+			SYS_RemoveAlarm(timer);
 		}
 	}
 	return 0;

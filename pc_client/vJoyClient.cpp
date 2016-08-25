@@ -57,7 +57,7 @@ int __cdecl _tmain(int argc, _TCHAR* argv[])
 		return 2;
 	}
 
-	_tprintf("GBA Link Cable WiFi Input Client v1.0 (%s) by FIX94\n", arch);
+	_tprintf("GBA Link Cable WiFi Input Client v1.1 (%s) by FIX94\n", arch);
 
 	_tprintf("Please enter the Wii IP:\n");
 	char line[30];
@@ -81,7 +81,17 @@ int __cdecl _tmain(int argc, _TCHAR* argv[])
 		if (ntohl(backmsg) == 0xDEADBEEF)
 			break;
 	}
+	// Wii sends out more than one package to ensure we got the message back
+	uint32_t tmp;
+	while (recvfrom(sockfd, (char*)&tmp, 4, 0, (struct sockaddr *)&serv_addr, &serv_len) == 4) ;
 	_tprintf("Connected\n");
+
+	// Make sure to only have a small UDP buffer to not overflow with old data
+	int a = 10; //5 packets buffer MAX
+	if (setsockopt(sockfd, SOL_SOCKET, SO_RCVBUF, (const char*)&a, sizeof(int)) == SOCKET_ERROR) {
+		_tprintf("ERROR setting socket opts\n");
+		goto Exit;
+	}
 
 	UINT DevID = 1;
 
