@@ -201,7 +201,7 @@ int main(int argc, char *argv[])
 	{
 		printf("\x1b[2J");
 		printf("\x1b[37m");
-		printf("GBA Link Cable WiFi Input Server v1.1 by FIX94\n");
+		printf("GBA Link Cable WiFi Input Server v1.2 by FIX94\n");
 		puts(ipChar);
 		printf("You can press any GC controller button to quit\n");
 		printf("Waiting for GBA in port 2...\n");
@@ -315,32 +315,37 @@ int main(int argc, char *argv[])
 				net_sendto(sock, &theRes, 4, 0, (struct sockaddr *)&from, length);
 				VIDEO_WaitVSync();
 			}
-			printf("All Done, sending inputs to PC\n   ");
+			printf("All Done, sending inputs to PC\nCurrent Stats per Second:\n   ");
 			//hm
-			int loops = 0, secToQuit = 15;
+			int loops = 0, secToQuit = 15, sleepDelay = 1400;
 			while(1)
 			{
 				if(updateStat)
 				{
 					if(ctrlread == 0 && ctrlerr > 700) {
 						secToQuit--;
-						printf("\rPackets per second:%i, GBA disconnected, loop end in %i seconds     ",loops,secToQuit);
+						printf("\33[2K\rPackets:%i (%ius sleep in between), GBA lost, quitting in %i seconds",loops,sleepDelay,secToQuit);
 					}
 					else if(ctrlread < 1000) {
-						printf("\rPackets per second:%i, GBA Reads per second:%i (%i failed)          ",loops,ctrlread,ctrlerr);
+						printf("\33[2K\rPackets:%i (%ius sleep in between), GBA Reads:%i (%i failed)",loops,sleepDelay,ctrlread,ctrlerr);
 						secToQuit = 15;
 					}
 					updateStat = 0;
 					ctrlStatReset = 1;
+					//anti packet-flood
+					if(loops >= 290 && sleepDelay < 1800)
+						sleepDelay += 20;
+					else if(loops < 270 && sleepDelay > 1000)
+						sleepDelay -= 10;
 					loops = 0;
 				}
 				if(secToQuit <= 0) break;
 				vu16 data = pads;
 				net_sendto(sock, (void*)&data, 2, 0, (struct sockaddr *)&from, length);
-				usleep(1400);
+				usleep(sleepDelay);
 				loops++;
 			}
-			printf("\rGBA disconnected, loop end                                     ");
+			printf("\33[2K\rGBA disconnected, loop ended");
 			SYS_CancelAlarm(timer);
 			net_close(sock);
 			ctrlQuit = true;
